@@ -2,69 +2,218 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class CarEngine : MonoBehaviour {
+public class CarEngine : MonoBehaviour
+{
     public float maxSteerAngle = 45f;
-    public Color debugColor;
-	public Transform pathParent;
-    public Transform car;
-    public Rigidbody carRig;
-    public WheelCollider leftWheel;
-    public WheelCollider rightWheel;
-    public float power = 10.0f;
-	private List<Transform> nodes;
-	private int currentNode = 0;
-	// Use this for initialization
-	private void Start () {
-		Transform[] pathsTransforms = pathParent.GetComponentsInChildren<Transform>();
-		nodes = new List<Transform>();
+    public float turningSpeed = 5;
+    [Header("Debug绘制颜色")]
+    public Color pathColor;
+    public Color textColor;
+    public Color RaycastHitColor;
+    public Color RaycastNormalColor;
 
-		for(int i = 0; i < pathsTransforms.Length; i++) {
-            if(pathsTransforms[i] != pathParent.transform) {
-				nodes.Add(pathsTransforms[i]);
-			}
-		}
-	}
-	
-	// Update is called once per frame
-	private void FixedUpdate () {
+    public Transform pathParent;
+    public Transform car;
+    public WheelCollider leftWheelCollider;
+    public WheelCollider rightWheelCollider;
+    public Transform leftWheel;
+    public Transform rightWheel;
+    public float power = 10.0f;
+    private List<Transform> nodes;
+    private int currentNode = 0;
+    public bool isBreaking = false;
+    public bool isAvoiding;
+    //障碍物传感器
+    public float sensorLength = 3;
+    public Vector3 fronSensorPos = new Vector3(0,0,0);
+    public float sideSensorOffset = 5f;
+    public float frontSensorAngle = 30.0f;
+    // Use this for initialization
+    private float targetSteerAngle = 0;
+
+    public bool driveBackwords = false;
+    private void Start()
+    {
+        Transform[] pathsTransforms = pathParent.GetComponentsInChildren<Transform>();
+        nodes = new List<Transform>();
+
+        for (int i = 0; i < pathsTransforms.Length; i++)
+        {
+            if (pathsTransforms[i] != pathParent.transform)
+            {
+                nodes.Add(pathsTransforms[i]);
+            }
+        }
+    }
+
+    // Update is called once per frame
+    private void FixedUpdate()
+    {
+        sensors();
         applySteer();
         drive();
+        applyRotationToModel();
+        checkWayPoint();
+        learpToSteerAngle();
     }
-	private void applySteer() {
+    private void sensors() {
+        RaycastHit hit;
+        Vector3 sensorsStartPos = transform.position;
+        sensorsStartPos += transform.forward * fronSensorPos.y;
+        sensorsStartPos += transform.up * fronSensorPos.y;
+
+        float avoidMultiplier = 0;
+        isAvoiding = false;
+
+        //右传感器
+        sensorsStartPos += transform.right * sideSensorOffset;
+        if(Physics.Raycast(sensorsStartPos,transform.forward,out hit,sensorLength)) {
+            if(!hit.collider.CompareTag("Ground")) {
+                //Debug.DrawLine(sensorsStartPos,hit.point);
+                Debug.DrawLine(sensorsStartPos,hit.point,RaycastHitColor);
+                isAvoiding = true;
+                avoidMultiplier -= 0.5f;
+            } else {
+                Debug.DrawLine(sensorsStartPos,sensorsStartPos + new Vector3(0,sensorLength,0),RaycastNormalColor);
+            }
+        }
+        //Right angle 
+        else if(Physics.Raycast(sensorsStartPos,Quaternion.AngleAxis(frontSensorAngle,transform.up) * transform.forward ,out hit,sensorLength)) {
+            if(!hit.collider.CompareTag("Ground")) {
+                Debug.DrawLine(sensorsStartPos,hit.point,RaycastHitColor);
+                isAvoiding = true;
+                avoidMultiplier -= 0.5f;
+            } else {
+                Debug.DrawLine(sensorsStartPos,sensorsStartPos + new Vector3(0,sensorLength,0),RaycastNormalColor);
+            }
+        }
+        
+        //左传感器
+        sensorsStartPos -= transform.right * sideSensorOffset * 2;
+        if(Physics.Raycast(sensorsStartPos,transform.forward,out hit,sensorLength)) {
+            if(!hit.collider.CompareTag("Ground")) {
+               
+                Debug.DrawLine(sensorsStartPos,hit.point,RaycastHitColor);
+                isAvoiding = true;
+                avoidMultiplier +=1f;
+            } else {
+                Debug.DrawLine(sensorsStartPos,sensorsStartPos + new Vector3(sensorLength,0,0),RaycastNormalColor);
+            }
+        }
+        //Left angle 
+        else if(Physics.Raycast(sensorsStartPos,Quaternion.AngleAxis(-frontSensorAngle,transform.up) * transform.forward ,out hit,sensorLength)) {
+            if(!hit.collider.CompareTag("Ground")) {
+                Debug.DrawLine(sensorsStartPos,hit.point,RaycastHitColor);
+                isAvoiding = true;
+                avoidMultiplier += 1f;
+            }
+        }
+        if(avoidMultiplier == 0) {
+         //前中间传感器
+            if(Physics.Raycast(sensorsStartPos,transform.forward,out hit,sensorLength)) {
+                if(!hit.collider.CompareTag("Ground")) {
+                    Debug.DrawLine(sensorsStartPos,hit.point,RaycastHitColor);
+                    isAvoiding = true;
+                    if(hit.normal.x < 0) {
+                        avoidMultiplier = -1f;
+                    } else {
+                        avoidMultiplier = 1f;
+                    }
+                } else {
+                    Debug.DrawLine(sensorsStartPos,sensorsStartPos + new Vector3(sensorLength,0,0),RaycastNormalColor);
+                }
+            }
+        }
+        if(isAvoiding) {
+            targetSteerAngle = maxSteerAngle * avoidMultiplier;
+            
+        }
+    }
+    private void applySteer()
+    {
+        if(isAvoiding) return;
         Vector3 relativeVector = transform.InverseTransformPoint(nodes[currentNode].position);
         relativeVector = relativeVector / relativeVector.magnitude;
         //计算转向角度
-        float turningAngle = (relativeVector.x / relativeVector.magnitude) * maxSteerAngle;
-        leftWheel.steerAngle = turningAngle;
-        rightWheel.steerAngle = turningAngle;
-        //car.eulerAngles = new Vector3(0,turningAngle,0);
-        //carRig.angularVelocity = new Vector3(relativeVector.x * 5, 0, relativeVector.y * 5);
-        //carRig.AddForce(5,0,0);
-	}
-    private void drive() {
-        leftWheel.motorTorque = power;
-        rightWheel.motorTorque = power;
+        float turningSteer = (relativeVector.x / relativeVector.magnitude) * maxSteerAngle;
+        targetSteerAngle = turningSteer;
+
     }
-    private void checkWayPoint() {
-        if(Vector3.Distance(car.position,nodes[currentNode].position) < 0.05f) {
-            if(currentNode  == nodes.Count-1) {
-                currentNode = 0;
+    private void drive()
+    {
+        if(!isBreaking) {
+            leftWheelCollider.motorTorque = power;
+            rightWheelCollider.motorTorque = power;
+        }
+    }
+    private float currentSpeed() {
+        return 2 * Mathf.PI * leftWheelCollider.radius * rightWheelCollider.rpm * 60 / 1000;
+    }
+    private void breaking() {
+        if(isBreaking) {
+            leftWheelCollider.brakeTorque = power + 20f;
+            rightWheelCollider.brakeTorque = power + 20f;
+        } else {
+            leftWheelCollider.brakeTorque = 0;
+            rightWheelCollider.brakeTorque = 0;
+        }
+    }
+    private void learpToSteerAngle() {
+        rightWheelCollider.steerAngle = Mathf.Lerp(rightWheelCollider.steerAngle,targetSteerAngle,Time.deltaTime * turningSpeed);
+        leftWheelCollider.steerAngle = Mathf.Lerp(leftWheelCollider.steerAngle,targetSteerAngle,Time.deltaTime * turningSpeed);
+    }
+    private void checkWayPoint()
+    {
+        if (Vector3.Distance(transform.position, nodes[currentNode].position) < 2.0f)
+        {
+            if(!driveBackwords) {
+                if (currentNode == nodes.Count - 1)
+                {
+                    currentNode = 0;
+                }
+                else
+                {
+                    currentNode++;
+                }
             } else {
-                currentNode++;
+                if (currentNode == 0)
+                {
+                    currentNode = nodes.Count - 1;
+                }
+                else
+                {
+                    currentNode--;
+                }
             }
+           
 
         }
 
     }
+    private void applyRotationToModel() {
+        leftWheel.localEulerAngles = new Vector3(leftWheel.localEulerAngles.x, leftWheelCollider.steerAngle - leftWheel.localEulerAngles.z, leftWheel.localEulerAngles.z);
+        rightWheel.localEulerAngles = new Vector3(rightWheel.localEulerAngles.x, rightWheelCollider.steerAngle - rightWheel.localEulerAngles.z, rightWheel.localEulerAngles.z);
 
-	private void OnDrawGizmos() {
-        if (nodes != null) {
-            Gizmos.color = debugColor;
+        leftWheel.Rotate(leftWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
+        rightWheel.Rotate(rightWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
+        /* 
+        rlWheel.Rotate(rlWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
+        rrWheel.Rotate(rrWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
+        */
+    }
+    private void OnDrawGizmos()
+    {
+        if (nodes != null)
+        {
+            Gizmos.color = pathColor;
             Gizmos.DrawLine(transform.position, nodes[currentNode].position);
             Gizmos.DrawSphere(nodes[currentNode].position, 0.5f);
-            drawString("Distance to waypoint: "+Vector3.Distance(car.position, nodes[currentNode].position),transform.position,debugColor);
+            drawString("Distance to waypoint: " + Vector3.Distance(car.position, nodes[currentNode].position)+ "Speed: " + currentSpeed(), transform.position, textColor);
         }
-	}
+        if (isBreaking) {
+            Gizmos.DrawSphere(transform.position, 0.5f);
+        }
+    }
     private void drawString(string text, Vector3 worldPos, Color? colour = null)
     {
         UnityEditor.Handles.BeginGUI();
