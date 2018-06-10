@@ -11,13 +11,16 @@ public class CarEngine : MonoBehaviour
     public Color textColor;
     public Color RaycastHitColor;
     public Color RaycastNormalColor;
-
+    public float decellarationSpeed = 50f;
     public Transform pathParent;
     public Transform car;
     public WheelCollider leftWheelCollider;
     public WheelCollider rightWheelCollider;
     public Transform leftWheel;
     public Transform rightWheel;
+    
+    public Transform backrightWheel;
+    public Transform backLeftWheel;
     public float power = 10.0f;
     private List<Transform> nodes;
     private int currentNode = 0;
@@ -32,8 +35,16 @@ public class CarEngine : MonoBehaviour
     private float targetSteerAngle = 0;
 
     public bool driveBackwords = false;
+    private bool isReversing = false;
+    private float reverseCouter = 0.0f;
+    public float waitTimeToReverse = 2.0f;
+    public float reverFor = 1.5f; 
+    private Rigidbody carRig = null;
+
     private void Start()
     {
+        //获得Rigbody
+        this.carRig = this.GetComponent<Rigidbody>();
         Transform[] pathsTransforms = pathParent.GetComponentsInChildren<Transform>();
         nodes = new List<Transform>();
 
@@ -51,6 +62,7 @@ public class CarEngine : MonoBehaviour
     {
         sensors();
         applySteer();
+        breaking();
         drive();
         applyRotationToModel();
         checkWayPoint();
@@ -64,7 +76,24 @@ public class CarEngine : MonoBehaviour
 
         float avoidMultiplier = 0;
         isAvoiding = false;
-
+        //Breaking　Sensors
+        if (Physics.Raycast(sensorsStartPos, transform.forward, out hit, sensorLength))
+        {
+            if (!hit.collider.CompareTag("Ground"))
+            {
+                reverseCouter += Time.deltaTime;
+                if(reverseCouter >= waitTimeToReverse){
+                    reverseCouter = 0;
+                    isReversing = true;
+                    isAvoiding = true;
+                    isBreaking = false;
+                }
+                Debug.DrawLine(sensorsStartPos, hit.point, RaycastHitColor);
+            }
+            
+        } else {
+            isBreaking = false;
+        }
         //右传感器
         sensorsStartPos += transform.right * sideSensorOffset;
         if(Physics.Raycast(sensorsStartPos,transform.forward,out hit,sensorLength)) {
@@ -124,9 +153,19 @@ public class CarEngine : MonoBehaviour
                 }
             }
         }
-        if(isAvoiding) {
+        //倒车判定
+       
+        if(isReversing) {
+            Debug.Log("Reversing");
+            avoidMultiplier *= -1f;
+            reverseCouter += Time.deltaTime;
+            if(reverseCouter >= reverFor) {
+                reverseCouter = 0;
+                isReversing = false;
+            }
+        }
+        if(isAvoiding &&!isReversing) { 
             targetSteerAngle = maxSteerAngle * avoidMultiplier;
-            
         }
     }
     private void applySteer()
@@ -141,10 +180,15 @@ public class CarEngine : MonoBehaviour
     }
     private void drive()
     {
-        if(!isBreaking) {
+        if(isBreaking) return;
+        if(isReversing) { //倒车，给负向速度
+            leftWheelCollider.motorTorque = -power;
+            rightWheelCollider.motorTorque = -power;
+        } else {
             leftWheelCollider.motorTorque = power;
             rightWheelCollider.motorTorque = power;
         }
+        
     }
     private float currentSpeed() {
         return 2 * Mathf.PI * leftWheelCollider.radius * rightWheelCollider.rpm * 60 / 1000;
@@ -193,9 +237,11 @@ public class CarEngine : MonoBehaviour
     private void applyRotationToModel() {
         leftWheel.localEulerAngles = new Vector3(leftWheel.localEulerAngles.x, leftWheelCollider.steerAngle - leftWheel.localEulerAngles.z, leftWheel.localEulerAngles.z);
         rightWheel.localEulerAngles = new Vector3(rightWheel.localEulerAngles.x, rightWheelCollider.steerAngle - rightWheel.localEulerAngles.z, rightWheel.localEulerAngles.z);
-
         leftWheel.Rotate(leftWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
         rightWheel.Rotate(rightWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
+        backrightWheel.Rotate(rightWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
+        backLeftWheel.Rotate(leftWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
+        
         /* 
         rlWheel.Rotate(rlWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
         rrWheel.Rotate(rrWheelCollider.rpm / 60 * 360 * Time.deltaTime, 0, 0);
@@ -208,7 +254,7 @@ public class CarEngine : MonoBehaviour
             Gizmos.color = pathColor;
             Gizmos.DrawLine(transform.position, nodes[currentNode].position);
             Gizmos.DrawSphere(nodes[currentNode].position, 0.5f);
-            drawString("Distance to waypoint: " + Vector3.Distance(car.position, nodes[currentNode].position)+ "Speed: " + currentSpeed(), transform.position, textColor);
+            drawString("到节点距离: " +  Vector3.Distance(car.position, nodes[currentNode].position).ToString("F3")+ "速度: " + currentSpeed().ToString("F3"), transform.position, pathColor);
         }
         if (isBreaking) {
             Gizmos.DrawSphere(transform.position, 0.5f);
