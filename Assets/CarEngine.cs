@@ -5,6 +5,7 @@ using UnityEngine;
 public class CarEngine : MonoBehaviour
 {
     public float maxSteerAngle = 45f;
+    public float maxSpeed = 45f;
     public float turningSpeed = 5;
     [Header("Debug绘制颜色")]
     public Color pathColor;
@@ -40,7 +41,7 @@ public class CarEngine : MonoBehaviour
     public float waitTimeToReverse = 2.0f;
     public float reverFor = 1.5f; 
     private Rigidbody carRig = null;
-
+    public float waypointCheckOffset = 2.0f;
     private void Start()
     {
         //获得Rigbody
@@ -62,8 +63,8 @@ public class CarEngine : MonoBehaviour
     {
         sensors();
         applySteer();
-        breaking();
         drive();
+        breaking();
         applyRotationToModel();
         checkWayPoint();
         learpToSteerAngle();
@@ -86,13 +87,11 @@ public class CarEngine : MonoBehaviour
                     reverseCouter = 0;
                     isReversing = true;
                     isAvoiding = true;
-                    isBreaking = false;
+                   
                 }
                 Debug.DrawLine(sensorsStartPos, hit.point, RaycastHitColor);
             }
             
-        } else {
-            isBreaking = false;
         }
         //右传感器
         sensorsStartPos += transform.right * sideSensorOffset;
@@ -180,11 +179,12 @@ public class CarEngine : MonoBehaviour
     }
     private void drive()
     {
-        if(isBreaking) return;
+        if(currentSpeed() > maxSpeed) isBreaking = true;
+        else isBreaking = false;
         if(isReversing) { //倒车，给负向速度
             leftWheelCollider.motorTorque = -power;
             rightWheelCollider.motorTorque = -power;
-        } else {
+        } else if(!isBreaking) {
             leftWheelCollider.motorTorque = power;
             rightWheelCollider.motorTorque = power;
         }
@@ -208,7 +208,7 @@ public class CarEngine : MonoBehaviour
     }
     private void checkWayPoint()
     {
-        if (Vector3.Distance(transform.position, nodes[currentNode].position) < 2.0f)
+        if (Vector3.Distance(transform.position, nodes[currentNode].position) < waypointCheckOffset)
         {
             if(!driveBackwords) {
                 if (currentNode == nodes.Count - 1)
